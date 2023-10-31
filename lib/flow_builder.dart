@@ -48,6 +48,7 @@ class FlowBuilder<T> extends StatefulWidget {
     this.onComplete,
     this.controller,
     this.observers = const <NavigatorObserver>[],
+    this.overrideSystemNavigation = true,
   })  : assert(
           state != null || controller != null,
           'requires either state or controller',
@@ -74,6 +75,10 @@ class FlowBuilder<T> extends StatefulWidget {
   /// A list of [NavigatorObserver] for this [FlowBuilder].
   final List<NavigatorObserver> observers;
 
+  /// Overrides the system navigation.
+  /// Can have effect on deep linking not executed.
+  final bool overrideSystemNavigation;
+
   @override
   State<FlowBuilder<T>> createState() => _FlowBuilderState<T>();
 }
@@ -93,7 +98,11 @@ class _FlowBuilderState<T> extends State<FlowBuilder<T>> {
   void initState() {
     super.initState();
     _navigatorKey = GlobalObjectKey<NavigatorState>(this);
-    _SystemNavigationObserver.add(_pop);
+    _SystemNavigationObserver.add(
+      overrideSystemNavigation: widget.overrideSystemNavigation,
+      interceptor: _pop,
+    );
+
     _controller = _initController(widget.state);
     _pages = widget.onGeneratePages(_state, List.of(_pages));
     _history.add(_state);
@@ -121,8 +130,7 @@ class _FlowBuilderState<T> extends State<FlowBuilder<T>> {
 
   FlowController<T> _initController(T? state) {
     // ignore: null_check_on_nullable_type_parameter
-    return _controller = (widget.controller ?? FlowController(state!))
-      ..addListener(_listener);
+    return _controller = (widget.controller ?? FlowController(state!))..addListener(_listener);
   }
 
   void _removeListeners({required bool dispose}) {
@@ -225,8 +233,7 @@ class _InheritedFlowController<T> extends InheritedWidget {
   }
 
   @override
-  bool updateShouldNotify(_InheritedFlowController<T> oldWidget) =>
-      oldWidget.controller != controller;
+  bool updateShouldNotify(_InheritedFlowController<T> oldWidget) => oldWidget.controller != controller;
 }
 
 /// {@template flow_extension}
@@ -341,9 +348,12 @@ class _ConditionalWillPopScope extends StatelessWidget {
 abstract class _SystemNavigationObserver implements WidgetsBinding {
   static final _interceptors = ListQueue<ValueGetter<Future<bool>>>();
 
-  static void add(ValueGetter<Future<bool>> interceptor) {
+  static void add({
+    required bool overrideSystemNavigation,
+    required ValueGetter<Future<bool>> interceptor,
+  }) {
     _interceptors.addFirst(interceptor);
-    SystemChannels.navigation.setMethodCallHandler(_handleSystemNavigation);
+    if (overrideSystemNavigation) SystemChannels.navigation.setMethodCallHandler(_handleSystemNavigation);
   }
 
   static void remove(ValueGetter<Future<bool>> interceptor) {
@@ -356,6 +366,10 @@ abstract class _SystemNavigationObserver implements WidgetsBinding {
         return _popRoute();
       case 'pushRoute':
         return _pushRoute(methodCall.arguments);
+      case 'pushRouteInformation':
+        final routeArguments = methodCall.arguments as Map<dynamic, dynamic>;
+        final location = routeArguments['location'] as String;
+        return _pushRoute(location);
       default:
         return Future<dynamic>.value();
     }
